@@ -48,4 +48,13 @@ const (
 	AttrVirtual    = AttrPrefix + "/" + "virtual"
 	AttrRDMA       = AttrPrefix + "/" + "rdma"
 	AttrRDMADevice = AttrPrefix + "/" + "rdmaDevice"
+
+	// AttrDriver is the kernel driver currently bound to the PCI function.
+	// It lets a DeviceClass select functions that are giving the device in a
+	// particular way, e.g. CEL `device.attributes["dra.net"].driver == "vfio-pci"`.
+	AttrDriver = AttrPrefix + "/" + "driver"
+	// AttrIOMMUGroup is the IOMMU group of the PCI function. A VFIO claim needs
+	// it to open /dev/vfio/<group>, and operators use it to pin a claim to a
+	// function whose group is isolated.
+	AttrIOMMUGroup = AttrPrefix + "/" + "iommuGroup"
 )

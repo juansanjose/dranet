@@ -65,6 +65,7 @@ type inventoryDB interface {
 	GetDevice(deviceName string) (resourceapi.Device, bool)
 	GetNetInterfaceName(string) (string, error)
 	IsIBOnlyDevice(deviceName string) bool
+	GetVFIODeviceInfo(deviceName string) (string, int, error)
 	GetRDMADeviceName(deviceName string) (string, error)
 	GetDeviceConfig(deviceName string) (*apis.NetworkConfig, bool)
 	RequestRescan()

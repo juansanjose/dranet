@@ -21,8 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +50,15 @@ import (
 
 const (
 	rdmaCmPath = "/dev/infiniband/rdma_cm"
+)
+
+var (
+	// vfioControlDevicePath is the control device every VFIO user space driver
+	// opens before the per-group device.
+	vfioControlDevicePath = "/dev/vfio/vfio"
+	// vfioDevfsPath is the directory holding the VFIO device nodes. A variable
+	// so unit tests can substitute a synthetic tree.
+	vfioDevfsPath = "/dev/vfio"
 )
 
 // DRA hooks exposes Network Devices to Kubernetes, the Network devices and its attributes are
@@ -325,6 +336,41 @@ func (np *NetworkDriver) prepareDevice(ctx context.Context, nlHandle nlwrap.Hand
 		}
 		deviceCommitted = true
 		klog.V(4).Infof("IB-only claim resources for pod %s : %#v", podUID, deviceCfg)
+		return nil
+	}
+
+	// VFIO path: the claim asks for the PCI function as a VFIO device, so the
+	// device is never moved and never addressed by DRANET. Only the /dev/vfio
+	// nodes are handed to the workload at container creation (createContainer).
+	if netconf.VFIO != nil {
+		var vfioConfigErrors []error
+		for _, config := range claim.Status.Allocation.Devices.Config {
+			if config.Opaque == nil ||
+				config.Opaque.Driver != np.driverName ||
+				len(config.Requests) > 0 && !slices.Contains(config.Requests, requestName) {
+				continue
+			}
+			if errs := apis.ValidateVFIOConfig(&config.Opaque.Parameters); len(errs) > 0 {
+				vfioConfigErrors = append(vfioConfigErrors, errs...)
+			}
+		}
+		if len(vfioConfigErrors) > 0 {
+			return errors.Join(vfioConfigErrors...)
+		}
+		pciAddress, iommuGroup, err := np.netdb.GetVFIODeviceInfo(result.Device)
+		if err != nil {
+			return fmt.Errorf("failed to resolve VFIO device %s: %v", result.Device, err)
+		}
+		vfioConfig, err := buildVFIODeviceConfig(pciAddress, iommuGroup)
+		if err != nil {
+			return fmt.Errorf("failed to build VFIO config for device %s: %v", result.Device, err)
+		}
+		deviceCfg.VFIODevice = &vfioConfig
+		if err := np.podConfigStore.SetDeviceConfig(podUID, result.Device, deviceCfg); err != nil {
+			return fmt.Errorf("failed to persist device config for pod %s device %s: %v", podUID, result.Device, err)
+		}
+		deviceCommitted = true
+		klog.V(4).Infof("VFIO claim resources for pod %s : %#v", podUID, deviceCfg)
 		return nil
 	}
 
@@ -618,6 +664,23 @@ func formatDeviceNames(devices []resourceapi.Device, max int) string {
 	}
 
 	return fmt.Sprintf("%s, and %d more", strings.Join(deviceNames[:max], ", "), len(deviceNames)-max)
+}
+
+// buildVFIODeviceConfig resolves the character devices a workload needs to drive
+// a PCI function through VFIO: the control device and the per-IOMMU-group
+// device. Both are opened by the process inside the pod, so both are injected;
+// missing either makes the passthrough unusable.
+func buildVFIODeviceConfig(pciAddress string, iommuGroup int) (VFIODeviceConfig, error) {
+	cfg := VFIODeviceConfig{PCIAddress: pciAddress, IOMMUGroup: iommuGroup}
+	paths := []string{vfioControlDevicePath, filepath.Join(vfioDevfsPath, strconv.Itoa(iommuGroup))}
+	for _, devPath := range paths {
+		dev, err := GetDeviceInfo(devPath)
+		if err != nil {
+			return VFIODeviceConfig{}, fmt.Errorf("failed to get device info for %s: %w", devPath, err)
+		}
+		cfg.DevChars = append(cfg.DevChars, dev)
+	}
+	return cfg, nil
 }
 
 // buildRDMAConfig populates an RDMAConfig for the given rdma device name.

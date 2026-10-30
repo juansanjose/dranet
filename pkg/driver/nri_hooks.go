@@ -95,12 +95,20 @@ func (np *NetworkDriver) CreateContainer(ctx context.Context, pod *api.PodSandbo
 }
 
 func (np *NetworkDriver) createContainer(_ context.Context, _ *api.PodSandbox, _ *api.Container, podConfig PodConfig) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
-	// Containers only care about the RDMA char devices.
+	// Containers only care about the char devices: RDMA verbs/uverbs devices and
+	// the /dev/vfio nodes of a passthrough function.
 	devPaths := set.Set[string]{}
 	adjust := &api.ContainerAdjustment{}
 
 	for _, config := range podConfig.DeviceConfigs {
-		for _, dev := range config.RDMADevice.DevChars {
+		vfioDevChars := []LinuxDevice(nil)
+		if config.VFIODevice != nil {
+			vfioDevChars = config.VFIODevice.DevChars
+		}
+		devs := make([]LinuxDevice, 0, len(config.RDMADevice.DevChars)+len(vfioDevChars))
+		devs = append(devs, config.RDMADevice.DevChars...)
+		devs = append(devs, vfioDevChars...)
+		for _, dev := range devs {
 			// do not insert the same path multiple times
 			if devPaths.Has(dev.Path) {
 				continue
@@ -210,6 +218,19 @@ func (np *NetworkDriver) runPodSandbox(ctx context.Context, pod *api.PodSandbox,
 				metav1apply.Condition().
 					WithType("Ready").
 					WithReason("RDMAOnlyDeviceReady").
+					WithStatus(metav1.ConditionTrue).
+					WithLastTransitionTime(metav1.Now()),
+			)
+		}
+
+		// Block 4: Status conditions for VFIO passthrough devices. Nothing is
+		// moved on the host, so the device is ready as soon as its /dev/vfio
+		// nodes were resolved at prepare time.
+		if ifName == "" && config.VFIODevice != nil && config.VFIODevice.PCIAddress != "" {
+			resourceClaimStatusDevice.WithConditions(
+				metav1apply.Condition().
+					WithType("Ready").
+					WithReason("VFIOPassthroughDeviceReady").
 					WithStatus(metav1.ConditionTrue).
 					WithLastTransitionTime(metav1.Now()),
 			)

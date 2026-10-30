@@ -72,6 +72,23 @@ type DeviceConfig struct {
 	// RDMADevice holds RDMA-specific configurations if the network device
 	// has associated RDMA capabilities.
 	RDMADevice RDMAConfig `json:"rdmaDevice,omitempty"`
+
+	// VFIODevice holds the VFIO details of a device handed to the workload as a
+	// PCI passthrough function instead of as a netdev. Nil for every other
+	// device, which keeps existing checkpoints byte-identical.
+	VFIODevice *VFIODeviceConfig `json:"vfioDevice,omitempty"`
+}
+
+// VFIODeviceConfig is the resolved VFIO information of one device: which PCI
+// function it is and which /dev/vfio nodes the workload has to receive.
+type VFIODeviceConfig struct {
+	// PCIAddress is the function's PCI address, e.g. "0000:3b:00.2".
+	PCIAddress string `json:"pciAddress,omitempty"`
+	// IOMMUGroup is the group the function belongs to.
+	IOMMUGroup int `json:"iommuGroup,omitempty"`
+	// DevChars are the character devices to inject into the container:
+	// /dev/vfio/vfio and /dev/vfio/<IOMMUGroup>.
+	DevChars []LinuxDevice `json:"devChars,omitempty"`
 }
 
 // NetworkInterfaceState is the driver-recorded runtime counterpart of an

@@ -21,8 +21,11 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +69,25 @@ var (
 	// (userspace I/O and passthrough drivers). See
 	// isAllocatableNetworkDevice for why this list is used.
 	nonNetdevDrivers = sets.New("vfio-pci", "uio_pci_generic", "igb_uio", "pci-stub")
+
+	// vfioDriver is the driver a PCI function must be bound to in order to be
+	// handed to a workload as a VFIO device.
+	vfioDriver = "vfio-pci"
+
+	// passthroughNetdevDrivers are the non-netdev drivers whose PCI network
+	// functions are still published: they are allocatable, just not as a
+	// netdev. vfio-pci is the one a claim can ask for with `vfio: {}`.
+	// uio_pci_generic/igb_uio/pci-stub stay unpublished because DRANET has no
+	// way to hand them to a workload.
+	passthroughNetdevDrivers = sets.New(vfioDriver)
+)
+
+var (
+	// pciDevicesSysfs is the sysfs root used to resolve per-function PCI
+	// facts (currently the IOMMU group). It is a variable so unit tests can
+	// point it at a synthetic tree, the same way deviceAttributeMachineModifiers
+	// is used to redirect topology helpers.
+	pciDevicesSysfs = "/sys/bus/pci/devices"
 )
 
 type DB struct {
@@ -302,7 +324,8 @@ func (db *DB) discoverPCIDevices(pciInfo *ghw.PCIInfo) []hostDevice {
 		if !isNetworkDevice(pciDev) {
 			continue
 		}
-		if !isAllocatableNetworkDevice(pciDev) {
+		passthrough := isPassthroughNetworkDevice(pciDev)
+		if !isAllocatableNetworkDevice(pciDev) && !passthrough {
 			klog.Warningf("PCI network device %s is bound to driver %q which does not provide a netdev; not publishing it", pciDev.Address, pciDev.Driver)
 			continue
 		}
@@ -312,9 +335,88 @@ func (db *DB) discoverPCIDevices(pciInfo *ghw.PCIInfo) []hostDevice {
 			Capacity:   make(map[resourceapi.QualifiedName]resourceapi.DeviceCapacity),
 		}}
 		device.Attributes[apis.AttrPCIAddress] = resourceapi.DeviceAttribute{StringValue: &pciDev.Address}
+		if pciDev.Driver != "" {
+			device.Attributes[apis.AttrDriver] = resourceapi.DeviceAttribute{StringValue: ptr.To(pciDev.Driver)}
+		}
+		// A passthrough function is only usable when its IOMMU group is known,
+		// because that group is the device node the workload opens. Publish no
+		// group for the rest: it is not needed to move a netdev and would only
+		// add noise to unrelated DeviceClasses.
+		if passthrough {
+			group, err := readIOMMUGroup(pciDev.Address)
+			if err != nil {
+				klog.Warningf("PCI network device %s is bound to driver %q but its IOMMU group could not be resolved; not publishing it: %v", pciDev.Address, pciDev.Driver, err)
+				continue
+			}
+			device.Attributes[apis.AttrIOMMUGroup] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(group))}
+		}
 		devices = append(devices, device)
 	}
 	return devices
+}
+
+// isPassthroughNetworkDevice reports whether the PCI network function is bound
+// to a driver that keeps it out of the kernel netdev stack but can still be
+// handed to a workload, i.e. vfio-pci.
+func isPassthroughNetworkDevice(dev *ghw.PCIDevice) bool {
+	return dev.Driver != "" && passthroughNetdevDrivers.Has(dev.Driver)
+}
+
+// sysfsPCIAddress returns the address in the form sysfs uses, which always
+// carries the PCI domain: "0000:3b:00.2".
+func sysfsPCIAddress(pciAddress string) string {
+	if strings.Count(pciAddress, ":") == 1 {
+		return "0000:" + pciAddress
+	}
+	return pciAddress
+}
+
+// readIOMMUGroup returns the IOMMU group number of a PCI function by reading
+// /sys/bus/pci/devices/<address>/iommu_group. A function without an IOMMU group
+// (IOMMU disabled, or the group is not exposed) is an error: vfio-pci cannot
+// have bound it in that case.
+func readIOMMUGroup(pciAddress string) (int, error) {
+	if pciAddress == "" {
+		return 0, fmt.Errorf("empty PCI address")
+	}
+	link := filepath.Join(pciDevicesSysfs, sysfsPCIAddress(pciAddress), "iommu_group")
+	target, err := os.Readlink(link)
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", link, err)
+	}
+	group, err := strconv.Atoi(filepath.Base(target))
+	if err != nil {
+		return 0, fmt.Errorf("unexpected IOMMU group link %q: %w", target, err)
+	}
+	return group, nil
+}
+
+// GetVFIODeviceInfo returns the PCI address and IOMMU group of a device that is
+// bound to vfio-pci, so the driver can hand /dev/vfio/<group> to the workload.
+// It returns an error when the device is unknown, bound to another driver, or
+// has no resolvable IOMMU group.
+func (db *DB) GetVFIODeviceInfo(deviceName string) (string, int, error) {
+	device, exists := db.GetDevice(deviceName)
+	if !exists {
+		klog.V(3).Infof("Device %q not found in local store, rescanning.", deviceName)
+		db.scan()
+		device, exists = db.GetDevice(deviceName)
+		if !exists {
+			return "", 0, fmt.Errorf("device %q not found in inventory", deviceName)
+		}
+	}
+	addrAttr := device.Attributes[apis.AttrPCIAddress]
+	if addrAttr.StringValue == nil || *addrAttr.StringValue == "" {
+		return "", 0, fmt.Errorf("device %q is not a PCI device", deviceName)
+	}
+	if driverAttr := device.Attributes[apis.AttrDriver]; driverAttr.StringValue != nil && *driverAttr.StringValue != vfioDriver {
+		return "", 0, fmt.Errorf("device %q is bound to driver %q, not %q", deviceName, *driverAttr.StringValue, vfioDriver)
+	}
+	group, err := readIOMMUGroup(*addrAttr.StringValue)
+	if err != nil {
+		return "", 0, fmt.Errorf("device %q: %w", deviceName, err)
+	}
+	return *addrAttr.StringValue, group, nil
 }
 
 // discoveryNetworkInterfaces updates the devices based on information retried

@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -52,6 +53,7 @@ type fakeInventoryDB struct {
 	GetDeviceConfigFunc      func(deviceName string) (*apis.NetworkConfig, bool)
 	GetNetInterfaceNameFunc  func(deviceName string) (string, error)
 	IsIBOnlyDeviceFunc       func(deviceName string) bool
+	GetVFIODeviceInfoFunc    func(deviceName string) (string, int, error)
 	GetRDMADeviceNameFunc    func(deviceName string) (string, error)
 	GetProfileConfigFunc     func(deviceName string, claim *resourcev1.ResourceClaim, config *apis.NetworkConfig) (*apis.NetworkConfig, error)
 	ReleaseProfileConfigFunc func(deviceName string, claimUID types.UID, config *apis.NetworkConfig) error
@@ -90,6 +92,13 @@ func (m *fakeInventoryDB) IsIBOnlyDevice(deviceName string) bool {
 		return m.IsIBOnlyDeviceFunc(deviceName)
 	}
 	return false
+}
+
+func (m *fakeInventoryDB) GetVFIODeviceInfo(deviceName string) (string, int, error) {
+	if m.GetVFIODeviceInfoFunc != nil {
+		return m.GetVFIODeviceInfoFunc(deviceName)
+	}
+	return "", 0, fmt.Errorf("device %q is not a VFIO device", deviceName)
 }
 
 func (m *fakeInventoryDB) GetRDMADeviceName(deviceName string) (string, error) {

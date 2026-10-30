@@ -40,7 +40,22 @@ type NetworkConfig struct {
 
 	// Ethtool defines hardware offload features and other settings managed by `ethtool`.
 	Ethtool *EthtoolConfig `json:"ethtool,omitempty"`
+
+	// VFIO requests the device be handed to the workload as a VFIO device
+	// instead of as a network interface: the PCI function stays bound to
+	// vfio-pci and the workload receives /dev/vfio/vfio and /dev/vfio/<group>.
+	// This is what a VMM (KubeVirt) or a user-space driver (DPDK) needs.
+	// It is mutually exclusive with interface, routes, rules, neighbors,
+	// ethtool and profile, because none of them can be applied to a device that
+	// is not visible as a netdev.
+	VFIO *VFIOConfig `json:"vfio,omitempty"`
 }
+
+// VFIOConfig selects VFIO device passthrough for the allocated PCI function.
+// It deliberately has no fields yet: the IOMMU group is derived from the
+// device's PCI address at prepare time, which keeps the claim portable across
+// nodes and lets the driver rebind the function later without an API change.
+type VFIOConfig struct{}
 
 // InterfaceConfig represents the configuration for a single network interface.
 // These are fundamental properties, often managed using `ip link` commands.

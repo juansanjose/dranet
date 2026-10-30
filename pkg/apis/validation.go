@@ -464,6 +464,52 @@ func ValidateRDMAOnlyConfig(raw *runtime.RawExtension) []error {
 	return allErrors
 }
 
+// ValidateVFIOConfig checks that a NetworkConfig that asks for VFIO
+// passthrough contains no fields that only make sense for a device exposed as a
+// network interface. A VFIO device is opened by the workload through
+// /dev/vfio, so DRANET never owns its addresses, routes or offloads.
+func ValidateVFIOConfig(raw *runtime.RawExtension) []error {
+	if raw == nil || raw.Raw == nil || len(raw.Raw) == 0 {
+		return nil
+	}
+	var config NetworkConfig
+	var allErrors []error
+	strictErrs, err := json.UnmarshalStrict(raw.Raw, &config)
+	if err != nil {
+		return []error{fmt.Errorf("failed to unmarshal JSON data: %w", err)}
+	}
+	for _, e := range strictErrs {
+		allErrors = append(allErrors, fmt.Errorf("failed to unmarshal strict JSON data: %w", e))
+	}
+	if config.Interface.Name != "" || config.Interface.Type != "" ||
+		config.Interface.Addressing != "" || len(config.Interface.Addresses) > 0 ||
+		config.Interface.MTU != nil || config.Interface.HardwareAddr != nil ||
+		config.Interface.DHCP != nil || config.Interface.GSOMaxSize != nil ||
+		config.Interface.GROMaxSize != nil || config.Interface.GSOIPv4MaxSize != nil ||
+		config.Interface.GROIPv4MaxSize != nil || config.Interface.DisableEBPFPrograms != nil ||
+		config.Interface.Forwarding != nil || config.Interface.ARPIgnore != nil ||
+		config.Interface.ARPAnnounce != nil || config.Interface.AcceptRA != nil ||
+		config.Interface.VRF != nil || config.Interface.IPVlan != nil {
+		allErrors = append(allErrors, fmt.Errorf("interface configuration is not supported for VFIO devices (the device is not exposed as a network interface)"))
+	}
+	if len(config.Routes) > 0 {
+		allErrors = append(allErrors, fmt.Errorf("routes are not supported for VFIO devices"))
+	}
+	if len(config.Rules) > 0 {
+		allErrors = append(allErrors, fmt.Errorf("rules are not supported for VFIO devices"))
+	}
+	if config.Ethtool != nil {
+		allErrors = append(allErrors, fmt.Errorf("ethtool configuration is not supported for VFIO devices"))
+	}
+	if len(config.Neighbors) > 0 {
+		allErrors = append(allErrors, fmt.Errorf("neighbors are not supported for VFIO devices"))
+	}
+	if config.Profile != "" {
+		allErrors = append(allErrors, fmt.Errorf("profile is not supported for VFIO devices"))
+	}
+	return allErrors
+}
+
 // validateSubinterfaceOnlyConfig rejects the fields not supported on a subinterface
 // (e.g. IPVLAN): hardwareAddr, because an IPVLAN child always uses its parent's MAC
 // address, and DHCP, because its client runs on the host parent and the child path is untested.
