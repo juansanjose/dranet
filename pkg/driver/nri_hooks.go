@@ -171,12 +171,18 @@ func (np *NetworkDriver) runPodSandbox(ctx context.Context, pod *api.PodSandbox,
 	logger := klog.FromContext(ctx)
 	// get the pod network namespace
 	ns := getNetworkNamespace(pod)
-	// host network pods can not allocate network devices because it impact the host
-	if ns == "" {
-		return fmt.Errorf("RunPodSandbox pod %s/%s using host network can not claim host devices", pod.Namespace, pod.Name)
+	// Moving a netdev (or an exclusive RDMA link) into a host-network pod would
+	// reconfigure the host, so those claims are rejected. A VFIO claim never
+	// touches a namespace: the device stays on the host and only char devices
+	// and metadata are injected, so host-network workloads (a DPDK process, for
+	// example) may use one.
+	if ns == "" && requiresPodNetNS(podConfig, np.rdmaSharedMode) {
+		return fmt.Errorf("RunPodSandbox pod %s/%s using host network can not claim network devices", pod.Namespace, pod.Name)
 	}
-	// store the Pod network namespace in the pod config store
-	np.podConfigStore.SetPodNetNs(types.UID(pod.GetUid()), ns)
+	if ns != "" {
+		// store the Pod network namespace in the pod config store
+		np.podConfigStore.SetPodNetNs(types.UID(pod.GetUid()), ns)
+	}
 
 	// Track all the status updates needed for the resource claims of the pod.
 	statusUpdates := map[types.NamespacedName]*resourceapply.ResourceClaimStatusApplyConfiguration{}
@@ -566,6 +572,21 @@ func (np *NetworkDriver) removePodSandbox(_ context.Context, pod *api.PodSandbox
 
 func (np *NetworkDriver) Shutdown(ctx context.Context) {
 	klog.FromContext(ctx).Info("Runtime shutting down...")
+}
+
+// requiresPodNetNS reports whether any claimed device has to be configured
+// inside the pod network namespace. VFIO-only claims do not.
+func requiresPodNetNS(podConfig PodConfig, rdmaSharedMode bool) bool {
+	for _, config := range podConfig.DeviceConfigs {
+		if config.NetworkInterfaceConfigInHost.Interface.Name != "" ||
+			config.NetworkInterfaceConfigInPod.Interface.Name != "" {
+			return true
+		}
+		if !rdmaSharedMode && config.RDMADevice.LinkDev != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func getNetworkNamespace(pod *api.PodSandbox) string {

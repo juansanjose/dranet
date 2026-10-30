@@ -163,3 +163,51 @@ func TestCreateContainerNoCharDevices(t *testing.T) {
 
 // guard against a podConfig key type change silently breaking the map above
 var _ = types.UID("")
+
+// A VFIO claim never touches a network namespace, so a host-network pod may use
+// one; netdev and exclusive RDMA claims still may not.
+func TestRequiresPodNetNS(t *testing.T) {
+	cases := []struct {
+		name           string
+		cfg            PodConfig
+		rdmaSharedMode bool
+		want           bool
+	}{
+		{
+			name: "vfio only does not need a netns",
+			cfg: PodConfig{DeviceConfigs: map[string]DeviceConfig{
+				"pci-0000-01-00-0": {VFIODevice: &VFIODeviceConfig{PCIAddress: "0000:01:00.0"}},
+			}},
+			want: false,
+		},
+		{
+			name: "netdev needs a netns",
+			cfg: PodConfig{DeviceConfigs: map[string]DeviceConfig{
+				"eth1": {NetworkInterfaceConfigInHost: apis.NetworkConfig{Interface: apis.InterfaceConfig{Name: "eth1"}}},
+			}},
+			want: true,
+		},
+		{
+			name: "exclusive rdma needs a netns",
+			cfg: PodConfig{DeviceConfigs: map[string]DeviceConfig{
+				"ib0": {RDMADevice: RDMAConfig{LinkDev: "mlx5_0"}},
+			}},
+			want: true,
+		},
+		{
+			name: "shared rdma does not need a netns",
+			cfg: PodConfig{DeviceConfigs: map[string]DeviceConfig{
+				"ib0": {RDMADevice: RDMAConfig{LinkDev: "mlx5_0"}},
+			}},
+			rdmaSharedMode: true,
+			want:           false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := requiresPodNetNS(tc.cfg, tc.rdmaSharedMode); got != tc.want {
+				t.Fatalf("requiresPodNetNS() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -40,6 +40,7 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	resourceapi "k8s.io/api/resource/v1"
+	apiruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -312,19 +313,8 @@ func (np *NetworkDriver) prepareDevice(ctx context.Context, nlHandle nlwrap.Hand
 	// IB-only path: device has RDMA capability but no netdev interface.
 	if np.netdb.IsIBOnlyDevice(result.Device) {
 		// Reject any network-specific config fields for RDMA-only devices.
-		var rdmaConfigErrors []error
-		for _, config := range claim.Status.Allocation.Devices.Config {
-			if config.Opaque == nil ||
-				config.Opaque.Driver != np.driverName ||
-				len(config.Requests) > 0 && !slices.Contains(config.Requests, requestName) {
-				continue
-			}
-			if errs := apis.ValidateRDMAOnlyConfig(&config.Opaque.Parameters); len(errs) > 0 {
-				rdmaConfigErrors = append(rdmaConfigErrors, errs...)
-			}
-		}
-		if len(rdmaConfigErrors) > 0 {
-			return errors.Join(rdmaConfigErrors...)
+		if err := np.validateRequestConfigs(claim, requestName, apis.ValidateRDMAOnlyConfig); err != nil {
+			return err
 		}
 		rdmaDevName, err := np.netdb.GetRDMADeviceName(result.Device)
 		if err != nil {
@@ -343,19 +333,8 @@ func (np *NetworkDriver) prepareDevice(ctx context.Context, nlHandle nlwrap.Hand
 	// device is never moved and never addressed by DRANET. Only the /dev/vfio
 	// nodes are handed to the workload at container creation (createContainer).
 	if netconf.VFIO != nil {
-		var vfioConfigErrors []error
-		for _, config := range claim.Status.Allocation.Devices.Config {
-			if config.Opaque == nil ||
-				config.Opaque.Driver != np.driverName ||
-				len(config.Requests) > 0 && !slices.Contains(config.Requests, requestName) {
-				continue
-			}
-			if errs := apis.ValidateVFIOConfig(&config.Opaque.Parameters); len(errs) > 0 {
-				vfioConfigErrors = append(vfioConfigErrors, errs...)
-			}
-		}
-		if len(vfioConfigErrors) > 0 {
-			return errors.Join(vfioConfigErrors...)
+		if err := np.validateRequestConfigs(claim, requestName, apis.ValidateVFIOConfig); err != nil {
+			return err
 		}
 		pciAddress, iommuGroup, err := np.netdb.GetVFIODeviceInfo(result.Device)
 		if err != nil {
@@ -671,6 +650,25 @@ func formatDeviceNames(devices []resourceapi.Device, max int) string {
 	}
 
 	return fmt.Sprintf("%s, and %d more", strings.Join(deviceNames[:max], ", "), len(deviceNames)-max)
+}
+
+// validateRequestConfigs runs a per-mode config validator over every opaque
+// configuration of the claim that applies to this request, and joins the errors.
+// Both the RDMA-only and the VFIO paths need exactly this, because a claim can
+// carry several config blocks and only some of them target this request.
+func (np *NetworkDriver) validateRequestConfigs(claim *resourceapi.ResourceClaim, requestName string, validate func(*apiruntime.RawExtension) []error) error {
+	var errs []error
+	for _, config := range claim.Status.Allocation.Devices.Config {
+		if config.Opaque == nil ||
+			config.Opaque.Driver != np.driverName ||
+			len(config.Requests) > 0 && !slices.Contains(config.Requests, requestName) {
+			continue
+		}
+		if verrs := validate(&config.Opaque.Parameters); len(verrs) > 0 {
+			errs = append(errs, verrs...)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // buildVFIODeviceConfig resolves the character devices a workload needs to drive

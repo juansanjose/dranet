@@ -73,7 +73,9 @@ nodes and a later driver-rebinding feature does not need an API change.
 * `NodePrepareResources`: validate the config, resolve the IOMMU group, record
   `/dev/vfio/vfio` and `/dev/vfio/<group>` (major/minor read from the host
   nodes) in the checkpointed device config.
-* `RunPodSandbox`: nothing to move; the device is marked ready.
+* `RunPodSandbox`: nothing to move; the device is marked ready. Unlike netdev
+  and exclusive-RDMA claims, a VFIO claim does not require a pod network
+  namespace, so host-network workloads (e.g. a DPDK process) can use one.
 * `CreateContainer`: the two character devices are injected through NRI next to
   the RDMA devices DRANET already injects.
 * `NodeUnprepareResources`: nothing to undo, because the host state was not
@@ -170,7 +172,12 @@ configuration issue, not a driver one.
    supported way to hand those to a workload, or is `vfio-pci` the only contract?
 3. Rebind-on-prepare: should the original driver live in the checkpoint, or be
    re-derived (the device's vendor/device ID maps back to its usual driver)?
-4. For KubeVirt specifically: is the expected flow a `HostDevice` with
+4. The KEP-5304 path is keyed by claim *name* only, without the namespace, and
+   KubeVirt looks it up the same way. Two claims with the same name in different
+   namespaces, both served by the same node, would collide on one file. Keying
+   by claim UID would remove the ambiguity but requires the consumer to agree;
+   worth raising upstream rather than diverging here.
+5. For KubeVirt specifically: is the expected flow a `HostDevice` with
    `externalResourceProvider: true` pointing at `dra.net`, and does the guest
    need any DRANET-side annotation (e.g. the function's MAC) that the type-2/
    netdev path provides today?
