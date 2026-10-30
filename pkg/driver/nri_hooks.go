@@ -101,6 +101,16 @@ func (np *NetworkDriver) createContainer(_ context.Context, _ *api.PodSandbox, _
 	adjust := &api.ContainerAdjustment{}
 
 	for _, config := range podConfig.DeviceConfigs {
+		// KEP-5304: give the consumer (e.g. KubeVirt) the device facts that are
+		// not in the ResourceClaim, such as the PCI address of the function.
+		if config.VFIODevice != nil && config.VFIODevice.MetadataPath != "" {
+			adjust.AddMount(&api.Mount{
+				Type:        "bind",
+				Source:      config.VFIODevice.MetadataPath,
+				Destination: config.VFIODevice.MetadataPath,
+				Options:     []string{"rbind", "ro"},
+			})
+		}
 		vfioDevChars := []LinuxDevice(nil)
 		if config.VFIODevice != nil {
 			vfioDevChars = config.VFIODevice.DevChars

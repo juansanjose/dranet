@@ -89,6 +89,12 @@ type VFIODeviceConfig struct {
 	// DevChars are the character devices to inject into the container:
 	// /dev/vfio/vfio and /dev/vfio/<IOMMUGroup>.
 	DevChars []LinuxDevice `json:"devChars,omitempty"`
+	// RequestName is the request inside the ResourceClaim that allocated this
+	// device. It keys the KEP-5304 metadata file the consumer reads.
+	RequestName string `json:"requestName,omitempty"`
+	// MetadataPath is the KEP-5304 metadata file published for this device. It
+	// is bind-mounted into the workload container at the same path.
+	MetadataPath string `json:"metadataPath,omitempty"`
 }
 
 // NetworkInterfaceState is the driver-recorded runtime counterpart of an

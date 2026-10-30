@@ -105,8 +105,10 @@ func fullDeviceConfig() DeviceConfig {
 			},
 		},
 		VFIODevice: &VFIODeviceConfig{
-			PCIAddress: "0000:3b:00.2",
-			IOMMUGroup: 42,
+			PCIAddress:   "0000:3b:00.2",
+			IOMMUGroup:   42,
+			RequestName:  "vfio",
+			MetadataPath: "/var/run/kubernetes.io/dra-device-attributes/resourceclaims/claim-1/vfio/dra.net-metadata.json",
 			DevChars: []LinuxDevice{{
 				Path:     "/dev/vfio/42",
 				Type:     "c",
@@ -135,7 +137,7 @@ func fullDeviceConfig() DeviceConfig {
 // goldenDeviceConfigJSON is the expected JSON output of fullDeviceConfig().
 // If TestDeviceConfigWireFormatGolden fails, either make the change backward-compatible
 // or bump checkpointSchemaVersion, add a migration, and update this golden string.
-const goldenDeviceConfigJSON = `{"claim":{"Namespace":"default","Name":"claim-1"},"deviceSnapshot":{"name":"dev0","attributes":{"dra.net/mac":{"string":"aa:bb:cc:dd:ee:ff"}}},"networkInterfaceConfigInHost":{"interface":{"name":"eth1","addresses":["192.168.1.10/24"],"hardwareAddr":"aa:bb:cc:dd:ee:ff"}},"networkInterfaceConfigInPod":{"profile":"hpc","interface":{"name":"net0","type":"IPVLAN","addressing":"DHCP","addresses":["10.0.0.5/24"],"dhcp":true,"mtu":9000,"hardwareAddr":"02:00:00:00:00:01","gsoMaxSize":65536,"groMaxSize":65536,"gsoIPv4MaxSize":65536,"groIPv4MaxSize":65536,"disableEbpfPrograms":true,"forwarding":true,"arpIgnore":1,"arpAnnounce":2,"acceptRA":2,"vrf":{"name":"vrf0","table":100},"ipvlan":{"mode":"L2","flag":"Bridge"}},"routes":[{"destination":"0.0.0.0/0","gateway":"10.0.0.1","source":"10.0.0.5","scope":253,"table":100}],"rules":[{"priority":1000,"source":"10.0.0.5/32","destination":"10.1.0.0/16","table":100}],"neighbors":[{"destination":"10.0.0.1","hardwareAddr":"02:00:00:00:00:02"}],"ethtool":{"features":{"tcp-segmentation-offload":true},"privateFlags":{"my-flag":false}},"vfio":{}},"networkInterfaceStateInPod":{"dhcpLease":{"clientIP":"10.0.0.5","clientMAC":"02:00:00:00:00:01","serverID":"10.0.0.1"}},"rdmaDevice":{"linkDev":"mlx5_0","devChars":[{"path":"/dev/infiniband/uverbs0","type":"c","major":231,"minor":192,"fileMode":438,"uid":1000,"gid":1000}]},"vfioDevice":{"pciAddress":"0000:3b:00.2","iommuGroup":42,"devChars":[{"path":"/dev/vfio/42","type":"c","major":238,"minor":1,"fileMode":438,"uid":1000,"gid":1000}]}}`
+const goldenDeviceConfigJSON = `{"claim":{"Namespace":"default","Name":"claim-1"},"deviceSnapshot":{"name":"dev0","attributes":{"dra.net/mac":{"string":"aa:bb:cc:dd:ee:ff"}}},"networkInterfaceConfigInHost":{"interface":{"name":"eth1","addresses":["192.168.1.10/24"],"hardwareAddr":"aa:bb:cc:dd:ee:ff"}},"networkInterfaceConfigInPod":{"profile":"hpc","interface":{"name":"net0","type":"IPVLAN","addressing":"DHCP","addresses":["10.0.0.5/24"],"dhcp":true,"mtu":9000,"hardwareAddr":"02:00:00:00:00:01","gsoMaxSize":65536,"groMaxSize":65536,"gsoIPv4MaxSize":65536,"groIPv4MaxSize":65536,"disableEbpfPrograms":true,"forwarding":true,"arpIgnore":1,"arpAnnounce":2,"acceptRA":2,"vrf":{"name":"vrf0","table":100},"ipvlan":{"mode":"L2","flag":"Bridge"}},"routes":[{"destination":"0.0.0.0/0","gateway":"10.0.0.1","source":"10.0.0.5","scope":253,"table":100}],"rules":[{"priority":1000,"source":"10.0.0.5/32","destination":"10.1.0.0/16","table":100}],"neighbors":[{"destination":"10.0.0.1","hardwareAddr":"02:00:00:00:00:02"}],"ethtool":{"features":{"tcp-segmentation-offload":true},"privateFlags":{"my-flag":false}},"vfio":{}},"networkInterfaceStateInPod":{"dhcpLease":{"clientIP":"10.0.0.5","clientMAC":"02:00:00:00:00:01","serverID":"10.0.0.1"}},"rdmaDevice":{"linkDev":"mlx5_0","devChars":[{"path":"/dev/infiniband/uverbs0","type":"c","major":231,"minor":192,"fileMode":438,"uid":1000,"gid":1000}]},"vfioDevice":{"pciAddress":"0000:3b:00.2","iommuGroup":42,"devChars":[{"path":"/dev/vfio/42","type":"c","major":238,"minor":1,"fileMode":438,"uid":1000,"gid":1000}],"requestName":"vfio","metadataPath":"/var/run/kubernetes.io/dra-device-attributes/resourceclaims/claim-1/vfio/dra.net-metadata.json"}}`
 
 func openRawBolt(t *testing.T, path string) *bolt.DB {
 	t.Helper()

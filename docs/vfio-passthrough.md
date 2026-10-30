@@ -111,6 +111,48 @@ injected device: /dev/vfio/vfio type=c major=10 minor=196
 injected device: /dev/vfio/1 type=c major=238 minor=1
 ```
 
+## Consuming the device from a VM (KubeVirt)
+
+A VMM needs the **PCI address** of the allocated function, which is not in the
+ResourceClaim. KEP-5304 is the contract: the driver publishes a JSON file per
+(claim, request, driver) that is mounted into the container at
+
+```
+/var/run/kubernetes.io/dra-device-attributes/resourceclaims/<claim>/<request>/<driver>-metadata.json
+```
+
+DRANET therefore writes that file at prepare time, carrying
+`resource.kubernetes.io/pciBusID`, and bind-mounts it into the workload via NRI.
+KubeVirt (`pkg/dra/utils.go`) reads exactly this path and turns it into a libvirt
+`<hostdev>`; without it a VMI fails with "HostDevice has no mdevUUID or pciBusID
+in metadata".
+
+`install.yaml` mounts `/dev/vfio` into the driver container, because prepare
+stats the group device nodes to fill in major/minor.
+
+### Verified end to end
+
+k3s v1.37.1 (DRA `resource.k8s.io/v1`, GA) + KubeVirt v1.9.1 with
+`HostDevices` + `HostDevicesWithDRA` + `NetworkDevicesWithDRA`, DRANET from this
+branch on one node, a 10G NIC bound to `vfio-pci` as the passthrough function:
+
+```
+DeviceClass dranet-vfio (CEL: driver=="dra.net" && attributes["dra.net"].driver=="vfio-pci")
+ResourceClaim vfio-nic (request "vfio", config {"vfio":{}})
+  -> allocated device pci-0000-01-00-0, request vfio, driver dra.net
+  -> condition Ready=True reason=VFIOPassthroughDeviceReady
+virt-launcher: /dev/vfio/vfio (10:196) and /dev/vfio/10 (240:0), metadata file mounted
+QEMU: -device {"driver":"vfio-pci","host":"0000:01:00.0","id":"ua-dra-hostdevice-passthrough-nic"}
+libvirt: <hostdev mode='subsystem' type='pci'><driver name='vfio'/><source address='0000:01:00.0'/>
+guest (VMI Running): "Ethernet controller: PCI device 8086:10fb" on PCI bus 8
+```
+
+Nested-virtualisation note: the node VM needs an emulated IOMMU that VFIO can
+use (`-device intel-iommu,intremap=on,caching-mode=on` together with
+`-machine kernel-irqchip=split`). With caching-mode alone QEMU fails with
+"failed to set iommu for container: Operation not permitted" — a hypervisor
+configuration issue, not a driver one.
+
 ## Open questions
 
 1. Should publishing `vfio-pci` functions be behind a feature flag? Clients that

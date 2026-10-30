@@ -365,6 +365,12 @@ func (np *NetworkDriver) prepareDevice(ctx context.Context, nlHandle nlwrap.Hand
 		if err != nil {
 			return fmt.Errorf("failed to build VFIO config for device %s: %v", result.Device, err)
 		}
+		vfioConfig.RequestName = result.Request
+		metadataPath, err := writeDRADeviceMetadata(np.driverName, np.nodeName, claim.Name, result.Request, result.Device, pciAddress)
+		if err != nil {
+			return fmt.Errorf("failed to publish DRA device metadata for %s: %v", result.Device, err)
+		}
+		vfioConfig.MetadataPath = metadataPath
 		deviceCfg.VFIODevice = &vfioConfig
 		if err := np.podConfigStore.SetDeviceConfig(podUID, result.Device, deviceCfg); err != nil {
 			return fmt.Errorf("failed to persist device config for pod %s device %s: %v", podUID, result.Device, err)
