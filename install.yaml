@@ -181,7 +181,11 @@ spec:
           path: /dev/infiniband
       - name: vfio
         hostPath:
+          # DirectoryOrCreate: nodes without VFIO loaded have no /dev/vfio and
+          # the DaemonSet must still start there; only passthrough devices need
+          # the nodes inside.
           path: /dev/vfio
+          type: DirectoryOrCreate
       - name: bpf-programs
         hostPath:
           path: /sys/fs/bpf

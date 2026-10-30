@@ -405,12 +405,21 @@ func (db *DB) GetVFIODeviceInfo(deviceName string) (string, int, error) {
 			return "", 0, fmt.Errorf("device %q not found in inventory", deviceName)
 		}
 	}
-	addrAttr := device.Attributes[apis.AttrPCIAddress]
-	if addrAttr.StringValue == nil || *addrAttr.StringValue == "" {
+	if addrAttr := device.Attributes[apis.AttrPCIAddress]; addrAttr.StringValue == nil || *addrAttr.StringValue == "" {
 		return "", 0, fmt.Errorf("device %q is not a PCI device", deviceName)
 	}
-	if driverAttr := device.Attributes[apis.AttrDriver]; driverAttr.StringValue != nil && *driverAttr.StringValue != vfioDriver {
-		return "", 0, fmt.Errorf("device %q is bound to driver %q, not %q", deviceName, *driverAttr.StringValue, vfioDriver)
+	addrAttr := device.Attributes[apis.AttrPCIAddress]
+	// Require the driver to be *known* to be vfio-pci. A device published
+	// without the attribute cannot be trusted to be a passthrough function, and
+	// handing out its /dev/vfio nodes would give the workload a device that is
+	// still owned by a kernel driver.
+	driverAttr := device.Attributes[apis.AttrDriver]
+	if driverAttr.StringValue == nil || *driverAttr.StringValue != vfioDriver {
+		bound := "<unknown>"
+		if driverAttr.StringValue != nil {
+			bound = *driverAttr.StringValue
+		}
+		return "", 0, fmt.Errorf("device %q is bound to driver %q, not %q", deviceName, bound, vfioDriver)
 	}
 	group, err := readIOMMUGroup(*addrAttr.StringValue)
 	if err != nil {

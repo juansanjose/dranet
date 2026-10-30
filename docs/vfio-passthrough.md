@@ -128,7 +128,14 @@ KubeVirt (`pkg/dra/utils.go`) reads exactly this path and turns it into a libvir
 in metadata".
 
 `install.yaml` mounts `/dev/vfio` into the driver container, because prepare
-stats the group device nodes to fill in major/minor.
+stats the group device nodes to fill in major/minor. The mount is
+`DirectoryOrCreate`: dranet runs on every node, and nodes without VFIO loaded
+have no `/dev/vfio` at all — the device count only matters where a passthrough
+function is actually published.
+
+A request with `count > 1` publishes several devices into the same metadata
+file, so the file is merged under a lock and each device upserted by name; the
+file is removed when the claim is unprepared and no other claim references it.
 
 ### Verified end to end
 

@@ -641,6 +641,7 @@ func (np *NetworkDriver) unprepareResourceClaim(_ context.Context, claim kubelet
 	}
 
 	np.podConfigStore.DeleteClaim(claim.NamespacedName)
+	np.sweepDRADeviceMetadata(claim.Name)
 	return nil
 }
 

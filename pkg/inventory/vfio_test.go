@@ -198,6 +198,16 @@ func TestGetVFIODeviceInfo(t *testing.T) {
 	if _, _, err := db.GetVFIODeviceInfo("pci-3b-00-3"); err == nil {
 		t.Fatalf("expected an error for a device not bound to vfio-pci")
 	}
+	// A device published without a driver attribute (older driver version) must
+	// not be handed out as a VFIO device: its /dev/vfio nodes would not exist.
+	db.deviceStore["pci-3b-00-9"] = hostDevice{Device: resourceapi.Device{
+		Attributes: map[resourceapi.QualifiedName]resourceapi.DeviceAttribute{
+			apis.AttrPCIAddress: {StringValue: ptr.To("0000:3b:00.2")},
+		},
+	}}
+	if _, _, err := db.GetVFIODeviceInfo("pci-3b-00-9"); err == nil {
+		t.Fatalf("expected an error for a device with no driver attribute")
+	}
 	if _, _, err := db.GetVFIODeviceInfo("does-not-exist"); err == nil {
 		t.Fatalf("expected an error for an unknown device")
 	}
